@@ -13,7 +13,7 @@ def getDatetime(dtStr):
                              int(components[2][2:4]), # Minute
                              int(components[2][-2:])) # Second
 
-def linkFiles(filenames, inputDir, outputDir):
+def joinFiles(filenames, inputDir, outputDir):
     # Check if we can skip
     output = os.path.join(outputDir, filenames[0])
     if os.path.exists(output):
@@ -47,8 +47,18 @@ def linkFiles(filenames, inputDir, outputDir):
     process.wait()
     tempFile.close()
     return tmpOutput
+    
+def compressFile(path):
+    if path is None:
+        return
+    intputPath = path
+    outputPath = os.path.join(os.path.dirname(path), os.path.basename(path)[4:])
+    command = "ffmpeg -stats -loglevel panic -i " + intputPath + " -vf scale=-1:720 -c:v libx264 -crf 20 -c:a copy " + outputPath
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+    process.wait()
+    os.remove(intputPath)
 
-def joinFiles(filenames, inputDir, outputDir, clipDuration):
+def processFiles(filenames, inputDir, outputDir, clipDuration):
     linkedFiles = []
     for i in range(len(filenames)):
         fileCurr = filenames[i]
@@ -61,26 +71,10 @@ def joinFiles(filenames, inputDir, outputDir, clipDuration):
             if abs(interval - clipDuration) <= 3:
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
-                compressFile(linkFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
+                compressFile(joinFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
                 linkedFiles = [fileCurr] # Start a new list
         if i == len(filenames) - 1:
-            compressFile(linkFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
-
-def compressFile(path):
-    if path is None:
-        return
-    intputPath = path
-    outputPath = os.path.join(os.path.dirname(path), os.path.basename(path)[4:])
-    command = "ffmpeg -stats -loglevel panic -i " + intputPath + " -c:v libx265 -x265-params log-level=error -crf 28 -c:a copy " + outputPath
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    process.wait()
-    os.remove(intputPath)
-
-def compressFiles(outputDir):
-    filenames = [f for f in os.listdir(outputDir) if f.startswith("tmp.") and os.path.isfile(os.path.join(outputDir, f))]
-    filenames.sort()
-    for filename in filenames:
-        compressFile(os.path.join(outputDir, filename))
+            compressFile(joinFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
 
 def process(inputDir, outputDir, clipDuration):
     filenames = [f for f in os.listdir(inputDir) if not f.startswith(".") and os.path.isfile(os.path.join(inputDir, f))]
@@ -93,9 +87,8 @@ def process(inputDir, outputDir, clipDuration):
             listA.append(filename)
         else:
             listB.append(filename)
-    joinFiles(listA, inputDir, outputDir, clipDuration)
-    joinFiles(listB, inputDir, outputDir, clipDuration)
-    # compressFiles(outputDir)
+    processFiles(listA, inputDir, outputDir, clipDuration)
+    processFiles(listB, inputDir, outputDir, clipDuration)
 
 if __name__ == '__main__':
 
