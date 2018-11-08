@@ -27,7 +27,7 @@ def joinFiles(filenames, inputDir, outputDir):
     # Skip if temp file exists
     if os.path.exists(tmpOutput):
         print("Concatenated file already exists, skip concatenating for " + tmpOutput)
-        return None
+        return tmpOutput
     # Start copying files to temp output
     print("Copying files to " + tmpOutput)
     # If there is only 1 file
@@ -53,7 +53,7 @@ def compressFile(path):
         return
     intputPath = path
     outputPath = os.path.join(os.path.dirname(path), os.path.basename(path)[4:])
-    command = "ffmpeg -stats -loglevel panic -i " + intputPath + " -vf scale=-1:720 -c:v libx264 -crf 20 -c:a copy " + outputPath
+    command = "ffmpeg -stats -loglevel panic -hwaccel auto -i " + intputPath + " -c:v libx265 -x265-params log-level=error -crf 30 -c:a copy " + outputPath
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     process.wait()
     os.remove(intputPath)
@@ -95,7 +95,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", dest = "input", help = "Input Directory", type = str)
     parser.add_argument("-o", "--output", dest = "output", help = "Output Directory", type = str)
-    parser.add_argument("-d", "--duration", dest = "duration", help = "Clip Duration", type = int)
+    parser.add_argument("-d", "--duration", dest = "duration", default = 300, help = "Clip Duration", type = int)
     args = parser.parse_args()
 
     process(args.input, args.output, args.duration)
