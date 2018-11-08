@@ -18,7 +18,7 @@ def linkFiles(filenames, inputDir, outputDir):
     output = os.path.join(outputDir, filenames[0])
     if os.path.exists(output):
         print("Converted file already exists, skip concatenating & compressing for " + output)
-        return
+        return None
     # Create directory if not exists
     if not os.path.exists(outputDir):
         os.makedirs(outputDir)
@@ -27,7 +27,7 @@ def linkFiles(filenames, inputDir, outputDir):
     # Skip if temp file exists
     if os.path.exists(tmpOutput):
         print("Concatenated file already exists, skip concatenating for " + tmpOutput)
-        return
+        return None
     # Start copying files to temp output
     print("Copying files to " + tmpOutput)
     # If there is only 1 file
@@ -36,7 +36,7 @@ def linkFiles(filenames, inputDir, outputDir):
         print(command)
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
         process.wait()
-        return
+        return tmpOutput
     # If there are multiple files
     inputPaths = list(map(lambda file: os.path.join(inputDir, file), filenames))
     tempFile = tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', prefix='list')
@@ -46,6 +46,7 @@ def linkFiles(filenames, inputDir, outputDir):
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     process.wait()
     tempFile.close()
+    return tmpOutput
 
 def joinFiles(filenames, inputDir, outputDir, clipDuration):
     linkedFiles = []
@@ -60,12 +61,14 @@ def joinFiles(filenames, inputDir, outputDir, clipDuration):
             if abs(interval - clipDuration) <= 3:
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
-                linkFiles(linkedFiles, inputDir, outputDir) # Unlinked file, link the list
+                compressFile(linkFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
                 linkedFiles = [fileCurr] # Start a new list
         if i == len(filenames) - 1:
-            linkFiles(linkedFiles, inputDir, outputDir) # Last file, link the list
+            compressFile(linkFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
 
 def compressFile(path):
+    if path is None:
+        return
     intputPath = path
     outputPath = os.path.join(os.path.dirname(path), os.path.basename(path)[4:])
     command = "ffmpeg -stats -loglevel panic -i " + intputPath + " -c:v libx265 -x265-params log-level=error -crf 28 -c:a copy " + outputPath
@@ -92,7 +95,7 @@ def process(inputDir, outputDir, clipDuration):
             listB.append(filename)
     joinFiles(listA, inputDir, outputDir, clipDuration)
     joinFiles(listB, inputDir, outputDir, clipDuration)
-    compressFiles(outputDir)
+    # compressFiles(outputDir)
 
 if __name__ == '__main__':
 
