@@ -47,11 +47,13 @@ def compressFile((inputPath, outputDir, isTemp)):
         return
     filename = os.path.basename(inputPath)
     outputPath = os.path.join(outputDir, (filename[4:] if isTemp else filename))
-    command = "ffmpeg -stats -loglevel error -i " + inputPath + " -c:v hevc_nvenc -rc constqp -qp 37 -r 20 -c:a aac -b:a 64k -ac 1 " + outputPath
-    print(command)
+    command = "ffmpeg -stats -loglevel error -i " + inputPath + " -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath
+    print("Converting \t" + inputPath)
+    print("Saving to \t" + outputPath)
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     process.wait()
     if isTemp:
+        print("Removing \t" + inputPath)
         os.remove(inputPath)
 
 def processFiles(filenames, inputDir, outputDir, clipDuration):
