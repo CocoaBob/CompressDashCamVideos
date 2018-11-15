@@ -13,6 +13,40 @@ def getDatetime(dtStr):
                              int(components[2][2:4]), # Minute
                              int(components[2][-2:])) # Second
 
+def filenamesInDir(dir):
+    filenames = [f for f in os.listdir(dir) if not f.startswith(".") and os.path.isfile(os.path.join(dir, f))]
+    filenames.sort()
+    return filenames
+
+def makePIPVideos(outputDir):
+    filenames = filenamesInDir(outputDir)
+    if len(filenames) == 0:
+        return
+    # Find related main/overlay videos
+    # main video name always ends with A
+    # overlay video name always ends with B
+    for i in range(len(filenames)):
+        if i == len(filenames) - 1: # Last file
+            break
+        filenameCurr = filenames[i]
+        filenameNext = filenames[i+1]
+        dtCurr = getDatetime(filenameCurr)
+        dtNext = getDatetime(filenameNext)
+        interval = abs((dtCurr - dtNext).total_seconds())
+        if interval < 2:
+            mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
+            overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
+            outputPath = os.path.join(outputDir, mainFile[:-5] + ".mp4")
+            command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath
+            print("Making PIP \t" + outputPath)
+            process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+            process.wait()
+            if os.path.exists(outputPath) and os.path.getsize(outputPath) > 0:
+                print("Deleting \t" + mainFile)
+                os.remove(mainFile)
+                print("Deleting \t" + overlayFile)
+                os.remove(overlayFile)
+
 def joinFiles(filenames, inputDir, outputDir):
     # Check if we can skip
     output = os.path.join(outputDir, filenames[0])
@@ -42,7 +76,7 @@ def joinFiles(filenames, inputDir, outputDir):
     process.wait()
     return tmpOutput, outputDir, True
     
-def compressFile((inputPath, outputDir, isTemp)):
+def transcodeFile((inputPath, outputDir, isTemp)):
     if inputPath is None:
         return
     filename = os.path.basename(inputPath)
@@ -52,11 +86,11 @@ def compressFile((inputPath, outputDir, isTemp)):
     print("Saving to \t" + outputPath)
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     process.wait()
-    if isTemp:
-        print("Removing \t" + inputPath)
+    if isTemp and os.path.exists(outputPath) and os.path.getsize(outputPath) > 0:
+        print("Deleting \t" + inputPath)
         os.remove(inputPath)
 
-def processFiles(filenames, inputDir, outputDir, clipDuration):
+def joinAndTranscode(filenames, inputDir, outputDir, clipDuration):
     linkedFiles = []
     for i in range(len(filenames)):
         fileCurr = filenames[i]
@@ -69,24 +103,24 @@ def processFiles(filenames, inputDir, outputDir, clipDuration):
             if abs(interval - clipDuration) <= 3:
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
-                compressFile(joinFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
+                transcodeFile(joinFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
                 linkedFiles = [fileCurr] # Start a new list
         if i == len(filenames) - 1:
-            compressFile(joinFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
+            transcodeFile(joinFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
 
 def process(inputDir, outputDir, clipDuration):
-    filenames = [f for f in os.listdir(inputDir) if not f.startswith(".") and os.path.isfile(os.path.join(inputDir, f))]
+    filenames = filenamesInDir(inputDir)
     if len(filenames) == 0:
         return
-    filenames.sort()
     listA, listB = [], []
     for filename in filenames:
         if filename.endswith("A.MP4"):
             listA.append(filename)
         else:
             listB.append(filename)
-    processFiles(listA, inputDir, outputDir, clipDuration)
-    processFiles(listB, inputDir, outputDir, clipDuration)
+    joinAndTranscode(listA, inputDir, outputDir, clipDuration)
+    joinAndTranscode(listB, inputDir, outputDir, clipDuration)
+    makePIPVideos(outputDir)
 
 if __name__ == '__main__':
 
