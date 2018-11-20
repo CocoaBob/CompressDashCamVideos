@@ -47,24 +47,29 @@ def makePIPVideos(outputDir):
                 print("Deleting \t" + overlayFile)
                 os.remove(overlayFile)
 
-def joinFiles(filenames, inputDir, outputDir):
+def joinSequentialFiles(filenames, inputDir, outputDir):
+    filename = filenames[0]
     # Check if we can skip
-    output = os.path.join(outputDir, filenames[0])
+    output = os.path.join(outputDir, filename)
     if os.path.exists(output):
-        print("Converted file already exists, skip concatenating & compressing for " + output)
+        print("Converted file already exists, skip joining & compressing for " + output)
+        return None, None, False
+    allPIPFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
+    if list(filter(lambda f: f.startswith(filename[:-10]), allPIPFileNames)).count > 0:
+        print("PIP file already exists, skip joining & compressing for " + output)
         return None, None, False
     # Create directory if not exists
     if not os.path.exists(outputDir):
         os.makedirs(outputDir)
     # Prepare temp output path
-    tmpOutput = os.path.join(outputDir, "tmp."+filenames[0])
+    tmpOutput = os.path.join(outputDir, "tmp."+filename)
     # Skip if temp file exists
     if os.path.exists(tmpOutput):
-        print("Concatenated file already exists, skip concatenating for " + tmpOutput)
+        print("Concatenated file already exists, skip joining for " + tmpOutput)
         return tmpOutput, outputDir, True
     # If there is only 1 file, return the original path directly
     if len(filenames) == 1:
-        return os.path.join(inputDir, filenames[0]), outputDir, False
+        return os.path.join(inputDir, filename), outputDir, False
     # If there are multiple files, join all of them
     print("Copying files to " + tmpOutput)
     inputPaths = list(map(lambda file: os.path.join(inputDir, file), filenames))
@@ -103,10 +108,10 @@ def joinAndTranscode(filenames, inputDir, outputDir, clipDuration):
             if abs(interval - clipDuration) <= 3:
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
-                transcodeFile(joinFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
+                transcodeFile(joinSequentialFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
                 linkedFiles = [fileCurr] # Start a new list
         if i == len(filenames) - 1:
-            transcodeFile(joinFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
+            transcodeFile(joinSequentialFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
 
 def process(inputDir, outputDir, clipDuration):
     filenames = filenamesInDir(inputDir)
