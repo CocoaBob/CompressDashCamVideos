@@ -62,40 +62,27 @@ def joinSequentialFiles(filenames, inputDir, outputDir):
     if not os.path.exists(outputDir):
         os.makedirs(outputDir)
     # Prepare temp output path
-    tmpOutput = os.path.join(outputDir, "tmp."+filename)
+    output = os.path.join(outputDir, filename)
     # Skip if temp file exists
-    if os.path.exists(tmpOutput):
-        print("Concatenated file already exists, skip joining for " + tmpOutput)
-        return tmpOutput, outputDir, True
+    if os.path.exists(output):
+        print("Concatenated file already exists, skip joining for " + output)
+        return output, outputDir, True
     # If there is only 1 file, return the original path directly
     if len(filenames) == 1:
         return os.path.join(inputDir, filename), outputDir, False
     # If there are multiple files, join all of them
-    print("Copying files to " + tmpOutput)
+    print("Copying files to " + output)
     inputPaths = list(map(lambda file: os.path.join(inputDir, file), filenames))
+    # print("Join Files:\n" + "\n".join(inputPaths))
     # generate "list.txt" file
     with open("list.txt", "w") as f:
         f.write("\n".join(map(lambda f: "file '" + f + "'", inputPaths)))
-    command = "ffmpeg -stats -loglevel error -f concat -safe 0 -i list.txt -c copy " + tmpOutput
+    command = "ffmpeg -stats -loglevel error -err_detect ignore_err -f concat -safe 0 -i list.txt -c copy " + output
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     process.wait()
-    return tmpOutput, outputDir, True
-    
-def transcodeFile((inputPath, outputDir, isTemp)):
-    if inputPath is None:
-        return
-    filename = os.path.basename(inputPath)
-    outputPath = os.path.join(outputDir, (filename[4:] if isTemp else filename))
-    command = "ffmpeg -stats -loglevel error -i " + inputPath + " -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath
-    print("Converting \t" + inputPath)
-    print("Saving to \t" + outputPath)
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    process.wait()
-    if isTemp and os.path.exists(outputPath) and os.path.getsize(outputPath) > 0:
-        print("Deleting \t" + inputPath)
-        os.remove(inputPath)
+    return output, outputDir, True
 
-def joinAndTranscode(filenames, inputDir, outputDir, clipDuration):
+def joinFiles(filenames, inputDir, outputDir, clipDuration):
     linkedFiles = []
     for i in range(len(filenames)):
         fileCurr = filenames[i]
@@ -108,10 +95,10 @@ def joinAndTranscode(filenames, inputDir, outputDir, clipDuration):
             if abs(interval - clipDuration) <= 3:
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
-                transcodeFile(joinSequentialFiles(linkedFiles, inputDir, outputDir)) # Unlinked file, link the list
+                joinSequentialFiles(linkedFiles, inputDir, outputDir) # Unlinked file, join the files in the current list
                 linkedFiles = [fileCurr] # Start a new list
         if i == len(filenames) - 1:
-            transcodeFile(joinSequentialFiles(linkedFiles, inputDir, outputDir)) # Last file, link the list
+            joinSequentialFiles(linkedFiles, inputDir, outputDir) # Last file, join the files in the list
 
 def process(inputDir, outputDir, clipDuration):
     filenames = filenamesInDir(inputDir)
@@ -123,8 +110,8 @@ def process(inputDir, outputDir, clipDuration):
             listA.append(filename)
         else:
             listB.append(filename)
-    joinAndTranscode(listA, inputDir, outputDir, clipDuration)
-    joinAndTranscode(listB, inputDir, outputDir, clipDuration)
+    joinFiles(listA, inputDir, outputDir, clipDuration)
+    joinFiles(listB, inputDir, outputDir, clipDuration)
     makePIPVideos(outputDir)
 
 if __name__ == '__main__':
