@@ -55,7 +55,7 @@ def joinSequentialFiles(filenames, inputDir, outputDir):
         print("Converted file already exists, skip joining & compressing for " + output)
         return None, None, False
     allPIPFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
-    if list(filter(lambda f: f.startswith(filename[:-10]), allPIPFileNames)).count > 0:
+    if len(list(filter(lambda f: f.startswith(filename[:-10]), allPIPFileNames))) > 0:
         print("PIP file already exists, skip joining & compressing for " + output)
         return None, None, False
     # Create directory if not exists
