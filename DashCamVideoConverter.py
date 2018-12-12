@@ -18,7 +18,7 @@ def filenamesInDir(dir):
     filenames.sort()
     return filenames
 
-def makePIPVideos(outputDir):
+def makePIPVideos(outputDir, isCPUMode):
     filenames = filenamesInDir(outputDir)
     if len(filenames) == 0:
         return
@@ -36,8 +36,11 @@ def makePIPVideos(outputDir):
         if interval < 2:
             mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
             overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
-            outputPath = os.path.join(outputDir, mainFile[:-5] + ".mp4")
-            command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath
+            outputPath = mainFile[:-5] + ".mp4"
+            if isCPUMode:
+                command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v libx265 -x265-params log-level=error -crf 37 -c:a aac -b:a 64k -ac 1 " + outputPath
+            else:
+                command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
             print("Making PIP \t" + outputPath)
             process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             process.wait()
@@ -100,7 +103,7 @@ def joinFiles(filenames, inputDir, outputDir, clipDuration):
         if i == len(filenames) - 1:
             joinSequentialFiles(linkedFiles, inputDir, outputDir) # Last file, join the files in the list
 
-def process(inputDir, outputDir, clipDuration):
+def process(inputDir, outputDir, clipDuration, isCPUMode):
     filenames = filenamesInDir(inputDir)
     if len(filenames) == 0:
         return
@@ -112,14 +115,15 @@ def process(inputDir, outputDir, clipDuration):
             listB.append(filename)
     joinFiles(listA, inputDir, outputDir, clipDuration)
     joinFiles(listB, inputDir, outputDir, clipDuration)
-    makePIPVideos(outputDir)
+    makePIPVideos(outputDir, isCPUMode)
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", dest = "input", help = "Input Directory", type = str)
     parser.add_argument("-o", "--output", dest = "output", help = "Output Directory", type = str)
+    parser.add_argument("-c", "--cpu", dest = "cpu", default = True, help = "CPU Mode", type = bool)
     parser.add_argument("-d", "--duration", dest = "duration", default = 300, help = "Clip Duration", type = int)
     args = parser.parse_args()
 
-    process(args.input, args.output, args.duration)
+    process(args.input, args.output, args.duration, args.cpu)
