@@ -33,15 +33,16 @@ def makePIPVideos(outputDir, isCPUMode):
         dtCurr = getDatetime(filenameCurr)
         dtNext = getDatetime(filenameNext)
         interval = abs((dtCurr - dtNext).total_seconds())
-        if interval < 2:
+        # If both A & B files are found
+        if interval <= 5:
             mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
             overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
             outputPath = mainFile[:-5] + ".mp4"
             if isCPUMode:
-                command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v libx265 -x265-params log-level=error -crf 37 -c:a aac -b:a 64k -ac 1 " + outputPath
+                command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v libx265 -x265-params log-level=error -crf 30 -c:a aac -b:a 64k -ac 1 " + outputPath
             else:
                 command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
-            print("Making PIP \t" + outputPath)
+            print("Compressing PIP video \t" + outputPath)
             process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             process.wait()
             if os.path.exists(outputPath) and os.path.getsize(outputPath) > 0:
@@ -49,6 +50,22 @@ def makePIPVideos(outputDir, isCPUMode):
                 os.remove(mainFile)
                 print("Deleting \t" + overlayFile)
                 os.remove(overlayFile)
+        # If only A or B file is found, and file still exists (may be already deleted together with the last file)
+        elif filenameCurr.endswith("A.MP4") or filenameCurr.endswith("B.MP4"):
+            mainFile = os.path.join(outputDir, filenameCurr)
+            if os.path.exists(mainFile):
+                outputPath = mainFile[:-5] + ".mp4"
+                if isCPUMode:
+                    command = "ffmpeg -stats -loglevel error -i " + mainFile + " -c:v libx265 -x265-params log-level=error -crf 30 -c:a aac -b:a 64k -ac 1 " + outputPath
+                else:
+                    command = "ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                print("Compressing video \t" + outputPath)
+                process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+                process.wait()
+                if os.path.exists(outputPath) > 0:
+                    print("Deleting \t" + mainFile)
+                    os.remove(mainFile)
+
 
 def joinSequentialFiles(filenames, inputDir, outputDir):
     filename = filenames[0]
@@ -95,7 +112,7 @@ def joinFiles(filenames, inputDir, outputDir, clipDuration):
             dtPrev = getDatetime(filenames[i-1])
             dtCurr = getDatetime(fileCurr)
             interval = (dtCurr - dtPrev).total_seconds()
-            if abs(interval - clipDuration) <= 3:
+            if abs(interval - clipDuration) <= 5:
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
                 joinSequentialFiles(linkedFiles, inputDir, outputDir) # Unlinked file, join the files in the current list
@@ -105,8 +122,6 @@ def joinFiles(filenames, inputDir, outputDir, clipDuration):
 
 def process(inputDir, outputDir, clipDuration, isCPUMode):
     filenames = filenamesInDir(inputDir)
-    if len(filenames) == 0:
-        return
     listA, listB = [], []
     for filename in filenames:
         if filename.endswith("A.MP4"):
