@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -34,7 +35,7 @@ def makePIPVideos(outputDir, isCPUMode):
         dtNext = getDatetime(filenameNext)
         interval = abs((dtCurr - dtNext).total_seconds())
         # If both A & B files are found
-        if interval <= 5:
+        if interval <= 10:
             mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
             overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
             outputPath = mainFile[:-5] + ".mp4"
@@ -68,28 +69,31 @@ def makePIPVideos(outputDir, isCPUMode):
 
 
 def joinSequentialFiles(filenames, inputDir, outputDir):
+    print("Join sequential files:\n" + ("\n".join(filenames)))
     filename = filenames[0]
-    # Check if we can skip
+    # Prepare temp output path
     output = os.path.join(outputDir, filename)
+    # Check if we can skip
     if os.path.exists(output):
         print("Converted file already exists, skip joining & compressing for " + output)
-        return None, None, False
+        return False
     allPIPFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
     if len(list(filter(lambda f: f.startswith(filename[:-10]), allPIPFileNames))) > 0:
         print("PIP file already exists, skip joining & compressing for " + output)
-        return None, None, False
+        return False
     # Create directory if not exists
     if not os.path.exists(outputDir):
         os.makedirs(outputDir)
-    # Prepare temp output path
-    output = os.path.join(outputDir, filename)
     # Skip if temp file exists
     if os.path.exists(output):
         print("Concatenated file already exists, skip joining for " + output)
-        return output, outputDir, True
+        return True
     # If there is only 1 file, return the original path directly
     if len(filenames) == 1:
-        return os.path.join(inputDir, filename), outputDir, False
+        inputPath= os.path.join(inputDir, filename)
+        print("Copying file to " + output)
+        shutil.copy(inputPath, output)
+        return True
     # If there are multiple files, join all of them
     print("Copying files to " + output)
     inputPaths = list(map(lambda file: os.path.join(inputDir, file), filenames))
@@ -100,7 +104,7 @@ def joinSequentialFiles(filenames, inputDir, outputDir):
     command = "ffmpeg -stats -loglevel error -err_detect ignore_err -f concat -safe 0 -i list.txt -c copy " + output
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     process.wait()
-    return output, outputDir, True
+    return True
 
 def joinFiles(filenames, inputDir, outputDir, clipDuration):
     linkedFiles = []
@@ -112,7 +116,7 @@ def joinFiles(filenames, inputDir, outputDir, clipDuration):
             dtPrev = getDatetime(filenames[i-1])
             dtCurr = getDatetime(fileCurr)
             interval = (dtCurr - dtPrev).total_seconds()
-            if abs(interval - clipDuration) <= 5:
+            if abs(interval) <= (clipDuration + 30):
                 linkedFiles.append(fileCurr) # Linked file, add to list
             else:
                 joinSequentialFiles(linkedFiles, inputDir, outputDir) # Unlinked file, join the files in the current list
