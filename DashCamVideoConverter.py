@@ -22,20 +22,19 @@ def filenamesInDir(dir):
 def makePIPVideos(outputDir, processor):
     filenames = filenamesInDir(outputDir)
     if len(filenames) == 0:
+        print("Directory is empty: " + outputDir)
         return
     # Find related main/overlay videos
     # main video name always ends with A
     # overlay video name always ends with B
     for i in range(len(filenames)):
-        if i == len(filenames) - 1: # Last file
-            break
         filenameCurr = filenames[i]
-        filenameNext = filenames[i+1]
+        filenameNext = filenames[i] if (i == len(filenames) - 1) else filenames[i + 1]
         dtCurr = getDatetime(filenameCurr)
         dtNext = getDatetime(filenameNext)
         interval = abs((dtCurr - dtNext).total_seconds())
         # If both A & B files are found
-        if interval <= 10:
+        if filenameCurr != filenameNext and interval <= 10:
             mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
             overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
             outputPath = mainFile[:-5] + ".mp4"
@@ -45,6 +44,8 @@ def makePIPVideos(outputDir, processor):
                 command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
             elif processor == 2:
                 command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]scale=iw/3:ih/3,crop=iw:ih*3/4:0:ih/8[pip];[1][pip] overlay=main_w/3:0\" -c:v hevc_videotoolbox -c:a aac -b:a 64k -ac 1 " + outputPath 
+            else:
+                print("Unknown processor parameter")
             print("Compressing PIP video \t" + outputPath)
             process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             process.wait()
@@ -64,12 +65,17 @@ def makePIPVideos(outputDir, processor):
                     command = "ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_nvenc -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2:
                     command = "ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_videotoolbox -c:a aac -b:a 64k -ac 1 " + outputPath 
+                else:
+                    print("Unknown processor parameter")
                 print("Compressing video \t" + outputPath)
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 process.wait()
                 if os.path.exists(outputPath) > 0:
                     print("Deleting \t" + mainFile)
                     os.remove(mainFile)
+            else:
+                print("File not exits: " + mainFile)
+
 
 
 def joinSequentialFiles(filenames, inputDir, outputDir):
