@@ -101,8 +101,8 @@ def compressVideos(outputDir, processor, model, clean):
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 process.wait()
                 if clean and os.path.exists(outputPath) > 0:
-                    print("Deleting temp file \t" + mainFile)
-                    os.remove(mainFile)
+                    print("Deleting temp file \t" + filePath)
+                    os.remove(filePath)
 
 
 
