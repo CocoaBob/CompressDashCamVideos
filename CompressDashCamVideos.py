@@ -30,11 +30,11 @@ def filenamesInDir(dir):
     return filenames
 
 def compressVideos(outputDir, processor, model, clean):
-    filenames = filenamesInDir(outputDir)
-    if len(filenames) == 0:
-        print("Output directory is empty: " + outputDir)
-        return
     if model == "s80wifi":
+        filenames = list(filter(lambda f: f.endswith("A.MP4") or f.endswith("B.MP4"), filenamesInDir(outputDir)))
+        if len(filenames) == 0:
+            print("Output directory is empty: " + outputDir)
+            return
         for i in range(len(filenames)):
             # Look for related front(A)/back(B) videos
             filenameCurr = filenames[i]
@@ -85,6 +85,10 @@ def compressVideos(outputDir, processor, model, clean):
                 # else: # Deleted together with the paired A/B file
                 #     print("File not exits: " + mainFile)
     elif model == "s36":
+        filenames = list(filter(lambda f: f.endswith(".MOV"), filenamesInDir(outputDir)))
+        if len(filenames) == 0:
+            print("Output directory is empty: " + outputDir)
+            return
         for i in range(len(filenames)):
             filePath = os.path.join(outputDir, filenames[i])
             if filePath.endswith(".MOV") and os.path.exists(filePath):
@@ -184,7 +188,7 @@ def process(inputDir, outputDir, clipLength, processor, model, clean):
         for filename in filenames:
             if filename.endswith("A.MP4"):
                 filenamesA.append(filename)
-            else:
+            elif filename.endswith("B.MP4"):
                 filenamesB.append(filename)
         catFiles(filenamesA, inputDir, outputDir, clipLength, model)
         catFiles(filenamesB, inputDir, outputDir, clipLength, model)
