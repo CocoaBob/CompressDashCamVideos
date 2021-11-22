@@ -36,8 +36,7 @@ def getVideoWidth(path):
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     return process.communicate()[0].decode("utf-8", "ignore").strip("\n")
 
-def getVideoQuality(path):
-    videoWidth = getVideoWidth(path)
+def getVideoQuality(videoWidth):
     if int(videoWidth) < 3000:
         return "30"
     else:
@@ -47,20 +46,6 @@ def filenamesInDir(dir):
     filenames = [f for f in os.listdir(dir) if not f.startswith(".") and os.path.isfile(os.path.join(dir, f))]
     filenames.sort()
     return filenames
-
-def findVideoResolution(pathToInputVideo):
-    cmd = "ffprobe -v quiet -print_format json -show_streams"
-    args = shlex.split(cmd)
-    args.append(pathToInputVideo)
-    # run the ffprobe process, decode stdout into utf-8 & convert to JSON
-    ffprobeOutput = subprocess.check_output(args).decode('utf-8')
-    ffprobeOutput = json.loads(ffprobeOutput)
-
-    # find height and width
-    height = ffprobeOutput['streams'][0]['height']
-    width = ffprobeOutput['streams'][0]['width']
-
-    return height, width
 
 def compressVideos(outputDir, processor, model):
     completedDir = os.path.join(outputDir, 'completed')
@@ -85,14 +70,15 @@ def compressVideos(outputDir, processor, model):
             # If both A & B are found (10 seconds tolerance), compress them to the same PIP video
             if filenameCurr != filenameNext and interval <= 10:
                 mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("a.MP4") else filenameNext))
+                mainFileWidth = getVideoWidth(mainFile)
                 overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("b.MP4") else filenameCurr))
                 outputPath = mainFile[:-9] + ".mp4"
                 if processor == 0: # CPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:0\" -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFile) + " -c:a aac -b:a 64k -ac 1 " + outputPath
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFileWidth) + " -c:a aac -b:a 64k -ac 1 " + outputPath
                 elif processor == 1: # Nvidia GPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:0\" -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2: # Apple GPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:0\" -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
                 print("Compressing PIP video \t" + outputPath)
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 process.wait()
@@ -101,19 +87,19 @@ def compressVideos(outputDir, processor, model):
                 skipNextFile = True
             # If only A or B is found, and file still exists, compress it only
             elif filenameCurr.endswith("a.MP4") or filenameCurr.endswith("b.MP4"):
-                mainFile = os.path.join(outputDir, filenameCurr)
-                if os.path.exists(mainFile):
-                    outputPath = mainFile[:-9] + ".mp4"
-                    if processor == 0: # CPU
-                        command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + mainFile + " -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFile) + " -c:a aac -b:a 64k -ac 1 " + outputPath
-                    elif processor == 1: # Nvidia GPU
-                        command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                    elif processor == 2: # Apple GPU
-                        command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                    print("Compressing video \t" + outputPath)
-                    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-                    process.wait()
-                    shutil.move(mainFile, completedDir)
+                filePath = os.path.join(outputDir, filenameCurr)
+                fileWidth = getVideoWidth(filePath)
+                outputPath = filePath[:-9] + ".mp4"
+                if processor == 0: # CPU
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(fileWidth) + " -c:a aac -b:a 64k -ac 1 " + outputPath
+                elif processor == 1: # Nvidia GPU
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                elif processor == 2: # Apple GPU
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                print("Compressing video \t" + outputPath)
+                process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+                process.wait()
+                shutil.move(filePath, completedDir)
     elif  model == "s80wifi":
         filenames = list(filter(lambda f: f.endswith("A.MP4") or f.endswith("B.MP4"), filenamesInDir(outputDir)))
         if len(filenames) == 0:
@@ -133,14 +119,15 @@ def compressVideos(outputDir, processor, model):
             # If both A & B are found (10 seconds tolerance), compress them to the same PIP video
             if filenameCurr != filenameNext and interval <= 10:
                 mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
+                mainFileWidth = getVideoWidth(mainFile)
                 overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
                 outputPath = mainFile[:-5] + ".mp4"
                 if processor == 0: # CPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:0\" -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFile) + " -c:a aac -b:a 64k -ac 1 " + outputPath
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFileWidth) + " -c:a aac -b:a 64k -ac 1 " + outputPath
                 elif processor == 1: # Nvidia GPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:0\" -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2: # Apple GPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:0\" -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
                 print("Compressing PIP video \t" + outputPath)
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 process.wait()
@@ -149,19 +136,19 @@ def compressVideos(outputDir, processor, model):
                 skipNextFile = True
             # If only A or B is found, and file still exists, compress it only
             elif filenameCurr.endswith("A.MP4") or filenameCurr.endswith("B.MP4"):
-                mainFile = os.path.join(outputDir, filenameCurr)
-                if os.path.exists(mainFile):
-                    outputPath = mainFile[:-5] + ".mp4"
-                    if processor == 0: # CPU
-                        command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + mainFile + " -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFile) + " -c:a aac -b:a 64k -ac 1 " + outputPath
-                    elif processor == 1: # Nvidia GPU
-                        command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                    elif processor == 2: # Apple GPU
-                        command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + mainFile + " -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                    print("Compressing video \t" + outputPath)
-                    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-                    process.wait()
-                    shutil.move(mainFile, completedDir)
+                filePath = os.path.join(outputDir, filenameCurr)
+                fileWidth = getVideoWidth(filePath)
+                outputPath = filePath[:-5] + ".mp4"
+                if processor == 0: # CPU
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(fileWidth) + " -c:a aac -b:a 64k -ac 1 " + outputPath
+                elif processor == 1: # Nvidia GPU
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                elif processor == 2: # Apple GPU
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_videotoolbox -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
+                print("Compressing video \t" + outputPath)
+                process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+                process.wait()
+                shutil.move(filePath, completedDir)
     elif model == "s36":
         filenames = list(filter(lambda f: f.endswith(".MOV"), filenamesInDir(outputDir)))
         if len(filenames) == 0:
@@ -169,10 +156,11 @@ def compressVideos(outputDir, processor, model):
             return
         for i in range(len(filenames)):
             filePath = os.path.join(outputDir, filenames[i])
-            if filePath.endswith(".MOV") and os.path.exists(filePath):
+            fileWidth = getVideoWidth(filePath)
+            if filePath.endswith(".MOV"):
                 outputPath = filePath[:-4] + ".mp4"
                 if processor == 0: # CPU
-                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(mainFile) + " -c:a aac -b:a 64k -ac 1 " + outputPath
+                    command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v libx265 -preset 5 -vtag hvc1 -x265-params log-level=error -crf " + getVideoQuality(fileWidth) + " -c:a aac -b:a 64k -ac 1 " + outputPath
                 elif processor == 1: # Nvidia GPU
                     command = "/usr/local/bin/ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp 37 -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2: # Apple GPU
