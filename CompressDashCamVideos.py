@@ -141,7 +141,8 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
         logging.warning("Didn't find any _a/_b file to process: " + outputDir)
         return
 
-    overlayFilter = '[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]format=yuva420p,geq=lum=\'p(X,Y)\':a=\'if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)\'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50'
+    # Input #0 is always the _b camera in paired mode, so apply hflip here for all models.
+    overlayFilter = '[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]hflip[overlay];[overlay]format=yuva420p,geq=lum=\'p(X,Y)\':a=\'if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)\'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50'
 
     skipNextFile = False
     for i in range(len(filenames)):
@@ -355,33 +356,33 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
     output = os.path.join(outputDir, outputFilename)
     # Check if we can skip
     if os.path.exists(output):
-        logging.info("Temp file already exists, skip cat & copy for \"" + output + "\"")
+        logging.info("Temp file already exists, skip video clip \"" + output + "\"")
         return False
     if model == "d5":
         allCompressedFileNames = list(filter(lambda f: not f.endswith("_a.MP4") and not f.endswith("_b.MP4"), filenamesInDir(outputDir)))
         outputPrefix = getD5OutputPrefix(filename)
         if len(list(filter(lambda f: f.startswith(outputPrefix), allCompressedFileNames))) > 0:
-            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
-            return False
-    elif  model == "s80wifi":
-        allCompressedFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
-        if len(list(filter(lambda f: f.startswith(filename[:-10]), allCompressedFileNames))) > 0:
-            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
-            return False
-    elif model == "s36":
-        allCompressedFileNames = list(filter(lambda f: not f.endswith(".MOV"), filenamesInDir(outputDir)))
-        if len(list(filter(lambda f: f.startswith(filename[:-4]), allCompressedFileNames))) > 0:
-            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
+            logging.info("Compressed file already exists, skip video clip \"" + output + "\"")
             return False
     elif model == "fitcamx":
         allCompressedFileNames = list(filter(lambda f: not f.endswith("_a.MP4") and not f.endswith("_b.MP4"), filenamesInDir(outputDir)))
         outputPrefix = getFitcamxOutputPrefix(filename)
         if len(list(filter(lambda f: f.startswith(outputPrefix), allCompressedFileNames))) > 0:
-            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
+            logging.info("Compressed file already exists, skip video clip \"" + output + "\"")
+            return False
+    elif  model == "s80wifi":
+        allCompressedFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
+        if len(list(filter(lambda f: f.startswith(filename[:-10]), allCompressedFileNames))) > 0:
+            logging.info("Compressed file already exists, skip video clip \"" + output + "\"")
+            return False
+    elif model == "s36":
+        allCompressedFileNames = list(filter(lambda f: not f.endswith(".MOV"), filenamesInDir(outputDir)))
+        if len(list(filter(lambda f: f.startswith(filename[:-4]), allCompressedFileNames))) > 0:
+            logging.info("Compressed file already exists, skip video clip \"" + output + "\"")
             return False
     # Skip if temp file exists
     if os.path.exists(output):
-        logging.info("Temp file already exists, skip cat & copy for \"" + output + "\"")
+        logging.info("Temp file already exists, skip video clip \"" + output + "\"")
         return True
     # If there is only 1 file, return the original path directly
     if len(filenames) == 1:
@@ -395,18 +396,11 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
             command.append(output)
             process = subprocess.Popen(command, stdout=subprocess.PIPE)
             process.wait()
-        elif model == "d5" and output.endswith("_a.MP4"):
+        elif model == "d5":
             videoStreamIndex = getHighestResolutionVideoStreamIndex(inputPath)
             command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-i', inputPath,
                        '-map', '0:v:' + str(videoStreamIndex), '-map', '0:a:0?',
                        '-c', 'copy', '-movflags', '+faststart', '-tag:v', 'hvc1', output]
-            process = subprocess.Popen(command, stdout=subprocess.PIPE)
-            process.wait()
-        elif model == "d5" and output.endswith("_b.MP4"):
-            command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-i', inputPath,
-                       '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'hflip',
-                       '-c:v', 'hevc_videotoolbox', '-q:v', '25', '-g', '240', '-tag:v', 'hvc1',
-                       '-c:a', 'aac', '-b:a', '64k', output]
             process = subprocess.Popen(command, stdout=subprocess.PIPE)
             process.wait()
         else:
@@ -429,20 +423,12 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
         process = subprocess.Popen(command, stdout=subprocess.PIPE)
         process.wait()
         return process.returncode == 0
-    elif model == "d5" and output.endswith("_a.MP4"):
+    elif model == "d5":
         videoStreamIndex = getHighestResolutionVideoStreamIndex(inputPaths[0])
         command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-err_detect', 'ignore_err',
                     '-f', 'concat', '-safe', '0', '-i', 'list.txt',
                     '-map', '0:v:' + str(videoStreamIndex), '-map', '0:a:0?',
                     '-c', 'copy', '-movflags', '+faststart', '-tag:v', 'hvc1', output]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE)
-        process.wait()
-        return process.returncode == 0
-    elif model == "d5" and output.endswith("_b.MP4"):
-        command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-err_detect', 'ignore_err', '-f', 'concat', '-safe', '0', '-i', 'list.txt',
-                    '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'hflip',
-                    '-c:v', 'hevc_videotoolbox', '-q:v', '25', '-g', '240', '-tag:v', 'hvc1',
-                    '-c:a', 'aac', '-b:a', '64k', output]
         process = subprocess.Popen(command, stdout=subprocess.PIPE)
         process.wait()
         return process.returncode == 0
