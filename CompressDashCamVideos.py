@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import json
 import logging
 import os
 import shutil
@@ -95,6 +96,34 @@ def filenamesInDir(dir):
     filenames = [f for f in os.listdir(dir) if not f.startswith(".") and os.path.isfile(os.path.join(dir, f))]
     filenames.sort()
     return filenames
+
+def getHighestResolutionVideoStreamIndex(path):
+    command = [
+        'ffprobe', '-v', 'error',
+        '-select_streams', 'v',
+        '-show_entries', 'stream=index,width,height',
+        '-of', 'json',
+        path
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+        streams = data.get('streams', [])
+    except (subprocess.SubprocessError, json.JSONDecodeError):
+        return 0
+
+    if len(streams) == 0:
+        return 0
+
+    bestStream = max(
+        streams,
+        key=lambda s: (
+            int(s.get('width') or 0) * int(s.get('height') or 0),
+            int(s.get('width') or 0),
+            int(s.get('height') or 0)
+        )
+    )
+    return int(bestStream.get('index', 0))
 
 def getNormalizedDualCameraDatetime(filename):
     # Expected format: YYYY_MMDD_HHMMSS_a.MP4 or YYYY_MMDD_HHMMSS_b.MP4
@@ -366,6 +395,13 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
             command.append(output)
             process = subprocess.Popen(command, stdout=subprocess.PIPE)
             process.wait()
+        elif model == "d5" and output.endswith("_a.MP4"):
+            videoStreamIndex = getHighestResolutionVideoStreamIndex(inputPath)
+            command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-i', inputPath,
+                       '-map', '0:v:' + str(videoStreamIndex), '-map', '0:a:0?',
+                       '-c', 'copy', '-movflags', '+faststart', '-tag:v', 'hvc1', output]
+            process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            process.wait()
         elif model == "d5" and output.endswith("_b.MP4"):
             command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-i', inputPath,
                        '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'hflip',
@@ -390,6 +426,15 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
         if output.endswith("_a.MP4"):
             command.extend(['-tag:v', 'hvc1'])
         command.append(output)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE)
+        process.wait()
+        return process.returncode == 0
+    elif model == "d5" and output.endswith("_a.MP4"):
+        videoStreamIndex = getHighestResolutionVideoStreamIndex(inputPaths[0])
+        command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-err_detect', 'ignore_err',
+                    '-f', 'concat', '-safe', '0', '-i', 'list.txt',
+                    '-map', '0:v:' + str(videoStreamIndex), '-map', '0:a:0?',
+                    '-c', 'copy', '-movflags', '+faststart', '-tag:v', 'hvc1', output]
         process = subprocess.Popen(command, stdout=subprocess.PIPE)
         process.wait()
         return process.returncode == 0
