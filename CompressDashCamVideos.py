@@ -97,12 +97,12 @@ def moveD5EmergencyToVideo(papagoDir):
                 shutil.move(src, dst)
 
 def getVideoWidth(path):
-    command = "ffmpeg -i " + path + " 2>&1 | perl -lane 'print $1 if /(\\d{4})x\\d{4}/'"
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    return process.communicate()[0].decode("utf-8", "ignore").strip("\n")
+    command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+               '-show_entries', 'stream=width', '-of', 'csv=p=0', path]
+    return int(subprocess.check_output(command, text=True).strip())
 
-def getVideoQuality(videoWidth):
-    if int(getVideoWidth(videoWidth)) < 3000:
+def getVideoQuality(path):
+    if getVideoWidth(path) < 3000:
         return "30"
     else:
         return "35"
@@ -150,14 +150,45 @@ def getNormalizedDualCameraDatetime(filename):
                             int(components[2][2:4]),
                             int(components[2][-2:]))
 
+def encodeDualCameraOutput(command, outputPath):
+    # Reserve the visible output path before letting FFmpeg write to it.
+    with open(outputPath, "xb"):
+        pass
+    try:
+        subprocess.run(command + ["-y", outputPath], check=True)
+        if os.path.getsize(outputPath) == 0:
+            raise RuntimeError(f"FFmpeg produced an empty file: {outputPath}")
+    except BaseException:
+        if os.path.exists(outputPath):
+            stem, extension = os.path.splitext(os.path.basename(outputPath))
+            fd, failedPath = tempfile.mkstemp(prefix=f"{stem}_failed_", suffix=extension,
+                                             dir=os.path.dirname(outputPath))
+            os.close(fd)
+            os.replace(outputPath, failedPath)
+            logging.error("Saved incomplete output as %s", failedPath)
+        raise
+
+def getDualCameraOverlayFilter(frontWidth):
+    # Use the front width from ffprobe so the front stream goes directly to overlay.
+    pipWidth = frontWidth // 6 * 2
+    radius = "(W/60)"  # Matches the old 32 px radius on a 1920 px rear input.
+    alpha = (
+        f"if(gt(abs(W/2-X),W/2-{radius})*gt(abs(H/2-Y),H/2-{radius}),"
+        f"if(lte(hypot({radius}-(W/2-abs(W/2-X)),{radius}-(H/2-abs(H/2-Y))),"
+        f"{radius}),255,0),255)"
+    )
+    return (
+        "[0:v:0]crop=iw:ih*3/4:0:ih/8,hflip[rear];"
+        f"[rear]scale=w={pipWidth}:h=trunc(ow/dar/2)*2:flags=lanczos[scaled];"
+        f"[scaled]format=yuva420p,geq=lum='p(X,Y)':cb='p(X,Y)':cr='p(X,Y)':a='{alpha}'[pip];"
+        "[1:v:0][pip]overlay=main_w/3:main_h/50:eof_action=pass:repeatlast=0"
+    )
+
 def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality):
     filenames = list(filter(lambda f: f.endswith("_a.MP4") or f.endswith("_b.MP4"), filenamesInDir(outputDir)))
     if len(filenames) == 0:
         logging.warning("Didn't find any _a/_b file to process: " + outputDir)
         return
-
-    # Input #0 is always the _b camera in paired mode, so apply hflip here for all models.
-    overlayFilter = '[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]hflip[overlay];[overlay]format=yuva420p,geq=lum=\'p(X,Y)\':a=\'if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)\'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50'
 
     skipNextFile = False
     for i in range(len(filenames)):
@@ -175,7 +206,8 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
             mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("_a.MP4") else filenameNext))
             outputPath = mainFile[:-6]
             overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("_b.MP4") else filenameCurr))
-            command = ['ffmpeg', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
+            overlayFilter = getDualCameraOverlayFilter(getVideoWidth(mainFile))
+            command = ['ffmpeg', '-nostdin', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
                         '-i', overlayFile,
                         '-i', mainFile,
                         '-filter_complex', overlayFilter,
@@ -206,7 +238,6 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
                         '-g', '240'
                         ])
                 outputPath = outputPath + ".mp4"
-                command.append(outputPath)
             elif codec == 1: # AV1
                 command.extend(['-c:v', 'libaom-av1',
                                 '-cpu-used', '8',
@@ -218,10 +249,8 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
                                 '-b:v', '0'
                                 ])
                 outputPath = outputPath + "_AV1.mp4"
-                command.append(outputPath)
             logging.info("Compressing PIP video \t" + outputPath)
-            process = subprocess.Popen(command, stdout=subprocess.PIPE)
-            process.wait()
+            encodeDualCameraOutput(command, outputPath)
             shutil.move(mainFile, completedDir)
             shutil.move(overlayFile, completedDir)
             skipNextFile = True
@@ -229,7 +258,7 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
         elif filenameCurr.endswith("_a.MP4") or filenameCurr.endswith("_b.MP4"):
             filePath = os.path.join(outputDir, filenameCurr)
             outputPath = filePath[:-6]
-            command = ['ffmpeg', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
+            command = ['ffmpeg', '-nostdin', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
                         '-i', filePath,
                         '-c:a', 'aac',
                         '-b:a', '64k',
@@ -258,7 +287,6 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
                         '-g', '240'
                         ])
                 outputPath = outputPath + ".mp4"
-                command.append(outputPath)
             else:
                 command.extend(['-c:v', 'libaom-av1',
                                 '-cpu-used', '8',
@@ -270,19 +298,15 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
                                 '-b:v', '0'
                                 ])
                 outputPath = outputPath + "_AV1.mp4"
-                command.append(outputPath)
             logging.info("Compressing video \t" + outputPath)
-            process = subprocess.Popen(command, stdout=subprocess.PIPE)
-            process.wait()
+            encodeDualCameraOutput(command, outputPath)
             shutil.move(filePath, completedDir)
 
 def compressVideos(outputDir, processor, codec, quality, model):
     completedDir = os.path.join(outputDir, 'completed')
     if not os.path.exists(completedDir):
         os.makedirs(completedDir)
-    if model == "d5":
-        compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
-    elif model == "fitcamx":
+    if model in ("d5", "fitcamx"):
         compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
     elif  model == "s80wifi":
         filenames = list(filter(lambda f: f.endswith("A.MP4") or f.endswith("B.MP4"), filenamesInDir(outputDir)))
@@ -373,16 +397,9 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
     if os.path.exists(output):
         logging.info("Temp file already exists, skip video clip \"" + output + "\"")
         return False
-    if model == "d5":
-        allCompressedFileNames = list(filter(lambda f: not f.endswith("_a.MP4") and not f.endswith("_b.MP4"), filenamesInDir(outputDir)))
-        outputPrefix = getD5OutputPrefix(filename)
-        if len(list(filter(lambda f: f.startswith(outputPrefix), allCompressedFileNames))) > 0:
-            logging.info("Compressed file already exists, skip video clip \"" + output + "\"")
-            return False
-    elif model == "fitcamx":
-        allCompressedFileNames = list(filter(lambda f: not f.endswith("_a.MP4") and not f.endswith("_b.MP4"), filenamesInDir(outputDir)))
-        outputPrefix = getFitcamxOutputPrefix(filename)
-        if len(list(filter(lambda f: f.startswith(outputPrefix), allCompressedFileNames))) > 0:
+    if model in ("d5", "fitcamx"):
+        if any(name.startswith(timestamp) and not name.endswith(("_a.MP4", "_b.MP4"))
+               and "_failed_" not in name for name in filenamesInDir(outputDir)):
             logging.info("Compressed file already exists, skip video clip \"" + output + "\"")
             return False
     elif  model == "s80wifi":
@@ -411,7 +428,7 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
             command.append(output)
             process = subprocess.Popen(command, stdout=subprocess.PIPE)
             process.wait()
-        elif model == "d5":
+        elif model == "d5" and output.endswith("_a.MP4"):
             videoStreamIndex = getHighestResolutionVideoStreamIndex(inputPath)
             command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-i', inputPath,
                        '-map', '0:v:' + str(videoStreamIndex), '-map', '0:a:0?',
@@ -438,7 +455,7 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
         process = subprocess.Popen(command, stdout=subprocess.PIPE)
         process.wait()
         return process.returncode == 0
-    elif model == "d5":
+    elif model == "d5" and output.endswith("_a.MP4"):
         videoStreamIndex = getHighestResolutionVideoStreamIndex(inputPaths[0])
         command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-err_detect', 'ignore_err',
                     '-f', 'concat', '-safe', '0', '-i', 'list.txt',
@@ -520,13 +537,11 @@ def process(inputDir, outputDir, clipLength, processor, codec, quality, model):
             catFiles(filenamesB, rearDir, outputDir, clipLength, model)
             compressVideos(outputDir, processor, codec, quality, model)
     else:
-        if model == "d5":
+        if model in ("d5", "fitcamx"):
             compressVideos(outputDir, processor, codec, quality, model)
         elif  model == "s80wifi":
             compressVideos(outputDir, processor, codec, quality, model)
         elif model == "s36":
-            compressVideos(outputDir, processor, codec, quality, model)
-        elif model == "fitcamx":
             compressVideos(outputDir, processor, codec, quality, model)
 
 if __name__ == '__main__':
