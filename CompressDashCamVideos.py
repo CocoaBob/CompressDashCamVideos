@@ -1,9 +1,16 @@
 import argparse
 import datetime
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 def getDatetime(dtStr, model):
     if model == "d5": # YYYY_MMDD_HHMMSS_00_a/b.mp4
@@ -30,6 +37,37 @@ def getDatetime(dtStr, model):
                                 int(components[3]), # Hour
                                 int(components[4]), # Minute
                                 int(components[5][:2])) # Second
+    elif model == "fitcamx": # YYYYMMDDHHMMSS_000001A/B.TS
+        return datetime.datetime.strptime(dtStr[:14], "%Y%m%d%H%M%S")
+
+def moveFitcamxEmrToMovie(cardvDir):
+    emrDir = os.path.join(cardvDir, "EMR")
+    movieDir = os.path.join(cardvDir, "Movie")
+    if os.path.isdir(emrDir) and os.path.isdir(movieDir):
+        emrFiles = filenamesInDir(emrDir)
+        if len(emrFiles) > 0:
+            logging.info("Moving EMR files to Movie...")
+            for filename in emrFiles:
+                src = os.path.join(emrDir, filename)
+                dst = os.path.join(movieDir, filename)
+                if os.path.exists(dst):
+                    logging.info("Skip existing file in Movie: " + dst)
+                    continue
+                shutil.move(src, dst)
+
+    emrEDir = os.path.join(cardvDir, "EMR_E")
+    movieEDir = os.path.join(cardvDir, "Movie_E")
+    if os.path.isdir(emrEDir) and os.path.isdir(movieEDir):
+        emrEFiles = filenamesInDir(emrEDir)
+        if len(emrEFiles) > 0:
+            logging.info("Moving EMR_E files to Movie_E...")
+            for filename in emrEFiles:
+                src = os.path.join(emrEDir, filename)
+                dst = os.path.join(movieEDir, filename)
+                if os.path.exists(dst):
+                    logging.info("Skip existing file in Movie_E: " + dst)
+                    continue
+                shutil.move(src, dst)
 
 def getVideoWidth(path):
     command = "ffmpeg -i " + path + " 2>&1 | perl -lane 'print $1 if /(\\d{4})x\\d{4}/'"
@@ -54,7 +92,7 @@ def compressVideos(outputDir, processor, codec, quality, model):
     if model == "d5":
         filenames = list(filter(lambda f: f.endswith("a.MP4") or f.endswith("b.MP4"), filenamesInDir(outputDir)))
         if len(filenames) == 0:
-            print("Didn't find any file to process for PAPAGO D5: " + outputDir)
+            logging.warning("Didn't find any file to process for PAPAGO D5: " + outputDir)
             return
         skipNextFile = False
         for i in range(len(filenames)):
@@ -73,7 +111,7 @@ def compressVideos(outputDir, processor, codec, quality, model):
                 outputPath = mainFile[:-9]
                 overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("b.MP4") else filenameCurr))
                 # Common parameters
-                command = ['ffmpeg', '-stats', '-loglevel', 'error',
+                command = ['ffmpeg', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
                             '-i', overlayFile,
                             '-i', mainFile,
                             '-filter_complex', '[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]hflip[overlay];[overlay]format=yuva420p,geq=lum=\'p(X,Y)\':a=\'if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)\'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50',
@@ -118,7 +156,7 @@ def compressVideos(outputDir, processor, codec, quality, model):
                                     ])
                     outputPath = outputPath + "_AV1.mp4"
                     command.append(outputPath)
-                print("Compressing PIP video \t" + outputPath)
+                logging.info("Compressing PIP video \t" + outputPath)
                 process = subprocess.Popen(command, stdout=subprocess.PIPE)
                 process.wait()
                 shutil.move(mainFile, completedDir)
@@ -129,7 +167,7 @@ def compressVideos(outputDir, processor, codec, quality, model):
                 filePath = os.path.join(outputDir, filenameCurr)
                 outputPath = filePath[:-9]
                 # Common ffmpeg parameters
-                command = ['ffmpeg', '-stats', '-loglevel', 'error',
+                command = ['ffmpeg', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
                          '-i', filePath,
                          '-c:a', 'aac',
                          '-b:a', '64k',
@@ -178,14 +216,14 @@ def compressVideos(outputDir, processor, codec, quality, model):
                                     ])
                     outputPath = outputPath + "_AV1.mp4"
                     command.append(outputPath)                
-                print("Compressing video \t" + outputPath)
+                logging.info("Compressing video \t" + outputPath)
                 process = subprocess.Popen(command, stdout=subprocess.PIPE)
                 process.wait()
                 shutil.move(filePath, completedDir)
     elif  model == "s80wifi":
         filenames = list(filter(lambda f: f.endswith("A.MP4") or f.endswith("B.MP4"), filenamesInDir(outputDir)))
         if len(filenames) == 0:
-            print("Didn't find any file to process for PAPAGO S80Wifi: " + outputDir)
+            logging.warning("Didn't find any file to process for PAPAGO S80Wifi: " + outputDir)
             return
         skipNextFile = False
         for i in range(len(filenames)):
@@ -209,7 +247,7 @@ def compressVideos(outputDir, processor, codec, quality, model):
                     command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]hflip[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp " + str(quality if quality != 0 else 37) + " -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2: # Apple GPU
                     command = "ffmpeg -stats -loglevel error -i " + overlayFile + " -i " + mainFile + " -filter_complex \"[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]hflip[overlay];[overlay]format=yuva420p,geq=lum='p(X,Y)':a='if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50\" -c:v hevc_videotoolbox -q:v " + str(quality if quality != 0 else 25) + " -g 240 -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                print("Compressing PIP video \t" + outputPath)
+                logging.info("Compressing PIP video \t" + outputPath)
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 process.wait()
                 shutil.move(mainFile, completedDir)
@@ -225,14 +263,14 @@ def compressVideos(outputDir, processor, codec, quality, model):
                     command = "ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp " + str(quality if quality != 0 else 37) + " -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2: # Apple GPU
                     command = "ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_videotoolbox -q:v " + str(quality if quality != 0 else 25) + " -g 240 -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                print("Compressing video \t" + outputPath)
+                logging.info("Compressing video \t" + outputPath)
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 process.wait()
                 shutil.move(filePath, completedDir)
     elif model == "s36":
         filenames = list(filter(lambda f: f.endswith(".MOV"), filenamesInDir(outputDir)))
         if len(filenames) == 0:
-            print("Didn't find any file to process for PAPAGO S36: " + outputDir)
+            logging.warning("Didn't find any file to process for PAPAGO S36: " + outputDir)
             return
         for i in range(len(filenames)):
             filePath = os.path.join(outputDir, filenames[i])
@@ -244,8 +282,127 @@ def compressVideos(outputDir, processor, codec, quality, model):
                     command = "ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_nvenc -vtag hvc1 -rc constqp -qp " + str(quality if quality != 0 else 37) + " -c:a aac -b:a 64k -ac 1 " + outputPath 
                 elif processor == 2: # Apple GPU
                     command = "ffmpeg -stats -loglevel error -i " + filePath + " -c:v hevc_videotoolbox -q:v " + str(quality if quality != 0 else 25) + " -g 240 -vtag hvc1 -c:a aac -b:a 64k -ac 1 " + outputPath 
-                print("Compressing video \t" + outputPath)
+                logging.info("Compressing video \t" + outputPath)
                 process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+                process.wait()
+                shutil.move(filePath, completedDir)
+    elif model == "fitcamx":
+        filenames = list(filter(lambda f: f.endswith("A.MP4") or f.endswith("B.MP4"), filenamesInDir(outputDir)))
+        if len(filenames) == 0:
+            logging.warning("Didn't find any file to process for FITCAMX: " + outputDir)
+            return
+        skipNextFile = False
+        for i in range(len(filenames)):
+            if skipNextFile:
+                skipNextFile = False
+                continue
+            filenameCurr = filenames[i]
+            filenameNext = filenames[i] if (i == len(filenames) - 1) else filenames[i + 1]
+            dtCurr = getDatetime(filenameCurr, model)
+            dtNext = getDatetime(filenameNext, model)
+            interval = abs((dtCurr - dtNext).total_seconds())
+            # If both A & B are found (10 seconds tolerance), compress them to the same PIP video
+            if filenameCurr != filenameNext and interval <= 10:
+                mainFile = os.path.join(outputDir, (filenameCurr if filenameCurr.endswith("A.MP4") else filenameNext))
+                outputPath = mainFile[:-5]
+                overlayFile = os.path.join(outputDir, (filenameNext if filenameNext.endswith("B.MP4") else filenameCurr))
+                command = ['ffmpeg', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
+                            '-i', overlayFile,
+                            '-i', mainFile,
+                            '-filter_complex', '[0]crop=iw:ih*3/4:0:ih/8[overlay];[overlay]hflip[overlay];[overlay]format=yuva420p,geq=lum=\'p(X,Y)\':a=\'if(gt(abs(W/2-X),W/2-32)*gt(abs(H/2-Y),H/2-32),if(lte(hypot(32-(W/2-abs(W/2-X)),32-(H/2-abs(H/2-Y))),32),255,0),255)\'[overlay];[overlay][1]scale2ref=iw/3:ow/mdar[overlay][main];[main][overlay]overlay=main_w/3:main_h/50',
+                            '-c:a', 'aac',
+                            '-b:a', '64k',
+                            '-ac', '1']
+                if codec == 0: # HEVC
+                    command.extend(['-vtag', 'hvc1'])
+                    if processor == 0: # CPU
+                        command.extend([
+                            '-c:v', 'libx265',
+                            '-preset', '5',
+                            '-x265-params', 'log-level=error',
+                            '-g', '240',
+                            '-b:v', '0',
+                            '-crf', str(quality if quality != 0 else getVideoQuality(mainFile))
+                            ])
+                    elif processor == 1: # Nvidia GPU
+                        command.extend([
+                            '-c:v', 'hevc_nvenc',
+                            '-rc', 'constqp',
+                            '-qp', str(quality if quality != 0 else 37)
+                            ])
+                    elif processor == 2: # Apple GPU
+                        command.extend([
+                            '-c:v', 'hevc_videotoolbox',
+                            '-q:v', str(quality if quality != 0 else 25),
+                            '-g', '240'
+                            ])
+                    outputPath = outputPath + ".mp4"
+                    command.append(outputPath)
+                elif codec == 1: # AV1
+                    command.extend(['-c:v', 'libaom-av1',
+                                    '-cpu-used', '8',
+                                    '-row-mt', '1',
+                                    '-tiles', '2x2',
+                                    '-preset', '8',
+                                    '-svtav1-params', 'fast-decode=1',
+                                    '-crf', str(quality if quality != 0 else 55),
+                                    '-b:v', '0'
+                                    ])
+                    outputPath = outputPath + "_AV1.mp4"
+                    command.append(outputPath)
+                logging.info("Compressing PIP video \t" + outputPath)
+                process = subprocess.Popen(command, stdout=subprocess.PIPE)
+                process.wait()
+                shutil.move(mainFile, completedDir)
+                shutil.move(overlayFile, completedDir)
+                skipNextFile = True
+            elif filenameCurr.endswith("A.MP4") or filenameCurr.endswith("B.MP4"):
+                filePath = os.path.join(outputDir, filenameCurr)
+                outputPath = filePath[:-5]
+                command = ['ffmpeg', '-stats', '-loglevel', 'error', '-hwaccel', 'auto',
+                            '-i', filePath,
+                            '-c:a', 'aac',
+                            '-b:a', '64k',
+                            '-ac', '1']
+                if codec == 0: # HEVC
+                    command.extend(['-vtag', 'hvc1'])
+                    if processor == 0:
+                        command.extend([
+                            '-c:v', 'libx265',
+                            '-preset', '5',
+                            '-x265-params', 'log-level=error',
+                            '-g', '240',
+                            '-b:v', '0',
+                            '-crf', str(quality if quality != 0 else getVideoQuality(filePath))
+                            ])
+                    elif processor == 1:
+                        command.extend([
+                            '-c:v', 'hevc_nvenc',
+                            '-rc', 'constqp',
+                            '-qp', str(quality if quality != 0 else 37)
+                            ])
+                    elif processor == 2:
+                        command.extend([
+                            '-c:v', 'hevc_videotoolbox',
+                            '-q:v', str(quality if quality != 0 else 25),
+                            '-g', '240'
+                            ])
+                    outputPath = outputPath + ".mp4"
+                    command.append(outputPath)
+                else:
+                    command.extend(['-c:v', 'libaom-av1',
+                                    '-cpu-used', '8',
+                                    '-row-mt', '1',
+                                    '-tiles', '2x2',
+                                    '-preset', '8',
+                                    '-svtav1-params', 'fast-decode=1',
+                                    '-crf', str(quality if quality != 0 else 55),
+                                    '-b:v', '0'
+                                    ])
+                    outputPath = outputPath + "_AV1.mp4"
+                    command.append(outputPath)
+                logging.info("Compressing video \t" + outputPath)
+                process = subprocess.Popen(command, stdout=subprocess.PIPE)
                 process.wait()
                 shutil.move(filePath, completedDir)
 
@@ -254,50 +411,80 @@ def catAndCopyFiles(filenames, inputDir, outputDir, model):
     if not os.path.exists(outputDir):
         os.makedirs(outputDir)
     # Create a temp file in the output directory
-    print("Cat & copy files:\n" + ("\n".join(filenames)))
+    logging.info("Cat & copy files:\n" + ("\n".join(filenames)))
     filename = filenames[0]
+    outputFilename = filename
+    if model == "fitcamx":
+        timestamp = filename.split("_")[0]
+        camera = filename[-4]
+        outputFilename = timestamp + camera + ".MP4"
     # Temp file path
-    output = os.path.join(outputDir, filename)
+    output = os.path.join(outputDir, outputFilename)
     # Check if we can skip
     if os.path.exists(output):
-        print("Temp file already exists, skip cat & copy for \"" + output + "\"")
+        logging.info("Temp file already exists, skip cat & copy for \"" + output + "\"")
         return False
     if model == "d5":
         allCompressedFileNames = list(filter(lambda f: not f.endswith("a.MP4") and not f.endswith("b.MP4"), filenamesInDir(outputDir)))
         if len(list(filter(lambda f: f.startswith(filename[:-10]), allCompressedFileNames))) > 0:
-            print("Compressed file already exists, skip cat & copy for \"" + output + "\"")
+            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
             return False
     elif  model == "s80wifi":
         allCompressedFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
         if len(list(filter(lambda f: f.startswith(filename[:-10]), allCompressedFileNames))) > 0:
-            print("Compressed file already exists, skip cat & copy for \"" + output + "\"")
+            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
             return False
     elif model == "s36":
         allCompressedFileNames = list(filter(lambda f: not f.endswith(".MOV"), filenamesInDir(outputDir)))
         if len(list(filter(lambda f: f.startswith(filename[:-4]), allCompressedFileNames))) > 0:
-            print("Compressed file already exists, skip cat & copy for \"" + output + "\"")
+            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
+            return False
+    elif model == "fitcamx":
+        allCompressedFileNames = list(filter(lambda f: not f.endswith("A.MP4") and not f.endswith("B.MP4"), filenamesInDir(outputDir)))
+        if len(list(filter(lambda f: f.startswith(filename.split("_")[0]), allCompressedFileNames))) > 0:
+            logging.info("Compressed file already exists, skip cat & copy for \"" + output + "\"")
             return False
     # Skip if temp file exists
     if os.path.exists(output):
-        print("Temp file already exists, skip cat & copy for \"" + output + "\"")
+        logging.info("Temp file already exists, skip cat & copy for \"" + output + "\"")
         return True
     # If there is only 1 file, return the original path directly
     if len(filenames) == 1:
         inputPath= os.path.join(inputDir, filename)
-        print("-> \"" + output + "\"")
-        shutil.copy(inputPath, output)
+        logging.info("-> \"" + output + "\"")
+        if model == "fitcamx":
+            command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-fflags', '+genpts', '-i', inputPath,
+                       '-map', '0', '-c', 'copy', '-movflags', '+faststart', '-brand', 'mp42']
+            if output.endswith("A.MP4"):
+                command.extend(['-tag:v', 'hvc1'])
+            command.append(output)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            process.wait()
+        else:
+            shutil.copy(inputPath, output)
         return True
     # If there are multiple files, join all of them
-    print("-> \"" + output + "\"")
+    logging.info("-> \"" + output + "\"")
     inputPaths = list(map(lambda file: os.path.join(inputDir, file), filenames))
-    # print("Join Files:\n" + "\n".join(inputPaths))
+    # logging.info("Join Files:\n" + "\n".join(inputPaths))
     # generate "list.txt" file
     with open("list.txt", "w") as f:
         f.write("\n".join(map(lambda f: "file '" + f + "'", inputPaths)))
-    command = "ffmpeg -stats -loglevel error -err_detect ignore_err -f concat -safe 0 -i list.txt -c copy " + output
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    process.wait()
-    return True
+    if model == "fitcamx":
+        command = ['ffmpeg', '-y', '-stats', '-loglevel', 'error', '-fflags', '+genpts',
+                    '-err_detect', 'ignore_err', '-f', 'concat', '-safe', '0', '-i', 'list.txt',
+                    '-map', '0', '-c', 'copy', '-movflags', '+faststart', '-brand', 'mp42']
+        if output.endswith("A.MP4"):
+            command.extend(['-tag:v', 'hvc1'])
+        command.append(output)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE)
+        process.wait()
+        return process.returncode == 0
+    else:
+        command = "ffmpeg -stats -loglevel error -err_detect ignore_err -f concat -safe 0 -i list.txt -c copy " + output
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+        process.wait()
+        return process.returncode == 0
 
 # Try to detect relationships and link files
 # If files are related (based on the clip length), they will be linked together
@@ -351,12 +538,24 @@ def process(inputDir, outputDir, clipLength, processor, codec, quality, model):
         elif model == "s36":
             catFiles(filenames, inputDir, outputDir, clipLength, model)
             compressVideos(outputDir, processor, codec, quality, model)
+        elif model == "fitcamx":
+            cardvDir = inputDir
+            moveFitcamxEmrToMovie(cardvDir)
+            frontDir = os.path.join(cardvDir, "Movie")
+            rearDir = os.path.join(cardvDir, "Movie_E")
+            filenamesA = list(filter(lambda f: f.endswith("A.TS"), filenamesInDir(frontDir))) if os.path.isdir(frontDir) else []
+            filenamesB = list(filter(lambda f: f.endswith("B.TS"), filenamesInDir(rearDir))) if os.path.isdir(rearDir) else []
+            catFiles(filenamesA, frontDir, outputDir, clipLength, model)
+            catFiles(filenamesB, rearDir, outputDir, clipLength, model)
+            compressVideos(outputDir, processor, codec, quality, model)
     else:
         if model == "d5":
             compressVideos(outputDir, processor, codec, quality, model)
         elif  model == "s80wifi":
             compressVideos(outputDir, processor, codec, quality, model)
         elif model == "s36":
+            compressVideos(outputDir, processor, codec, quality, model)
+        elif model == "fitcamx":
             compressVideos(outputDir, processor, codec, quality, model)
 
 if __name__ == '__main__':
@@ -367,9 +566,9 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--processor", dest = "processor", help = "Process Type, 0 = CPU, 1 = Nvidia GPU, 2 = Apple GPU", type = int, default = 0)
     parser.add_argument("-c", "--codec", dest = "codec", help = "Codec, 0 = HEVC, 1 = AV1", type = int, default = 0)
     parser.add_argument("-q", "--quality", dest = "quality", help = "Quality (CRF/CQ)", type = int, default = 0)
-    parser.add_argument("-m", "--model", dest = "model", help = "Dash cam model (d5, s80wifi, s36)", type = str, default="d5")
+    parser.add_argument("-m", "--model", dest = "model", help = "Dash cam model (d5, s80wifi, s36, fitcamx)", type = str, default="d5")
     args = parser.parse_args()
     if args.processor != 0 and args.processor != 1 and args.processor != 2:
-        print("Unknown processor parameter")
+        logging.error("Unknown processor parameter")
     else:
         process(args.input, args.output, args.length, args.processor, args.codec, args.quality, args.model)
