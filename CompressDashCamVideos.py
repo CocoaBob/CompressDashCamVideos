@@ -81,6 +81,21 @@ def moveFitcamxEmrToMovie(cardvDir):
                     continue
                 shutil.move(src, dst)
 
+def moveD5EmergencyToVideo(papagoDir):
+    emergencyDir = os.path.join(papagoDir, "EMERGENCY")
+    videoDir = os.path.join(papagoDir, "VIDEO")
+    if os.path.isdir(emergencyDir) and os.path.isdir(videoDir):
+        emergencyFiles = filenamesInDir(emergencyDir)
+        if len(emergencyFiles) > 0:
+            logging.info("Moving EMERGENCY files to VIDEO...")
+            for filename in emergencyFiles:
+                src = os.path.join(emergencyDir, filename)
+                dst = os.path.join(videoDir, filename)
+                if os.path.exists(dst):
+                    logging.info("Skip existing file in VIDEO: " + dst)
+                    continue
+                shutil.move(src, dst)
+
 def getVideoWidth(path):
     command = "ffmpeg -i " + path + " 2>&1 | perl -lane 'print $1 if /(\\d{4})x\\d{4}/'"
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
@@ -466,18 +481,21 @@ def catFiles(filenames, inputDir, outputDir, clipLength, model):
 
 def process(inputDir, outputDir, clipLength, processor, codec, quality, model):
     if os.path.exists(inputDir):
-        filenames = filenamesInDir(inputDir)
         if model == "d5":
+            moveD5EmergencyToVideo(inputDir)
+            videoDir = os.path.join(inputDir, "VIDEO")
+            filenames = filenamesInDir(videoDir)
             filenamesA, filenamesB = [], []
             for filename in filenames:
                 if filename.endswith("a.MP4"):
                     filenamesA.append(filename)
                 elif filename.endswith("b.MP4"):
                     filenamesB.append(filename)
-            catFiles(filenamesA, inputDir, outputDir, clipLength, model)
-            catFiles(filenamesB, inputDir, outputDir, clipLength, model)
+            catFiles(filenamesA, videoDir, outputDir, clipLength, model)
+            catFiles(filenamesB, videoDir, outputDir, clipLength, model)
             compressVideos(outputDir, processor, codec, quality, model)
         elif  model == "s80wifi":
+            filenames = filenamesInDir(inputDir)
             filenamesA, filenamesB = [], []
             for filename in filenames:
                 if filename.endswith("A.MP4"):
@@ -488,6 +506,7 @@ def process(inputDir, outputDir, clipLength, processor, codec, quality, model):
             catFiles(filenamesB, inputDir, outputDir, clipLength, model)
             compressVideos(outputDir, processor, codec, quality, model)
         elif model == "s36":
+            filenames = filenamesInDir(inputDir)
             catFiles(filenames, inputDir, outputDir, clipLength, model)
             compressVideos(outputDir, processor, codec, quality, model)
         elif model == "fitcamx":
