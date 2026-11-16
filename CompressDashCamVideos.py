@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 
@@ -150,12 +151,62 @@ def getNormalizedDualCameraDatetime(filename):
                             int(components[2][2:4]),
                             int(components[2][-2:]))
 
+def recoverIncompleteVideo(failedPath):
+    stem, extension = os.path.splitext(failedPath)
+    recoveredPath = stem + "_recovered" + extension
+    try:
+        if os.path.getsize(failedPath) == 0:
+            return
+        if os.path.lexists(recoveredPath):
+            raise FileExistsError(recoveredPath)
+        with tempfile.TemporaryDirectory(dir=os.path.dirname(failedPath)) as directory:
+            temporaryPath = os.path.join(directory, "recovered.mp4")
+            subprocess.run([
+                "ffmpeg", "-nostdin", "-loglevel", "error", "-fflags", "+discardcorrupt",
+                "-i", failedPath, "-map", "0:v:0", "-map", "0:a?", "-c", "copy",
+                "-movflags", "+faststart", temporaryPath,
+            ], check=True)
+            packets = subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-read_intervals", "%+#1", "-show_entries", "packet=size",
+                "-of", "csv=p=0", temporaryPath,
+            ], text=True)
+            if not packets.strip():
+                logging.warning("No complete video packets recovered from %s", failedPath)
+                return
+            os.replace(temporaryPath, recoveredPath)
+    except (OSError, subprocess.SubprocessError) as error:
+        logging.warning("Could not remux %s: %s", failedPath, error)
+        return
+    logging.info("Recovered playable video: %s", recoveredPath)
+
 def encodeDualCameraOutput(command, outputPath):
     # Reserve the visible output path before letting FFmpeg write to it.
-    with open(outputPath, "xb"):
-        pass
     try:
-        subprocess.run(command + ["-y", outputPath], check=True)
+        with open(outputPath, "xb"):
+            pass
+    except FileExistsError:
+        logging.info("Skipping encode because output already exists: %s", outputPath)
+        return False
+    try:
+        encodeCommand = command + [
+            "-movflags", "+hybrid_fragmented+delay_moov", "-frag_duration", "2000000",
+            "-flush_packets", "1", "-y", outputPath,
+        ]
+        # Let Python forward Ctrl+C or SIGTERM and wait for FFmpeg to close the file.
+        process = subprocess.Popen(encodeCommand, start_new_session=True)
+        try:
+            returnCode = process.wait()
+        except (KeyboardInterrupt, SystemExit):
+            process.terminate()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise
+        if returnCode != 0:
+            raise subprocess.CalledProcessError(returnCode, encodeCommand)
         if os.path.getsize(outputPath) == 0:
             raise RuntimeError(f"FFmpeg produced an empty file: {outputPath}")
     except BaseException:
@@ -166,7 +217,9 @@ def encodeDualCameraOutput(command, outputPath):
             os.close(fd)
             os.replace(outputPath, failedPath)
             logging.error("Saved incomplete output as %s", failedPath)
+            recoverIncompleteVideo(failedPath)
         raise
+    return True
 
 def getDualCameraOverlayFilter(frontWidth):
     # Use the front width from ffprobe so the front stream goes directly to overlay.
@@ -250,9 +303,9 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
                                 ])
                 outputPath = outputPath + "_AV1.mp4"
             logging.info("Compressing PIP video \t" + outputPath)
-            encodeDualCameraOutput(command, outputPath)
-            shutil.move(mainFile, completedDir)
-            shutil.move(overlayFile, completedDir)
+            if encodeDualCameraOutput(command, outputPath):
+                shutil.move(mainFile, completedDir)
+                shutil.move(overlayFile, completedDir)
             skipNextFile = True
         # If only A or B is found, and file still exists, compress it only
         elif filenameCurr.endswith("_a.MP4") or filenameCurr.endswith("_b.MP4"):
@@ -299,8 +352,8 @@ def compressDualCameraVideos(outputDir, completedDir, processor, codec, quality)
                                 ])
                 outputPath = outputPath + "_AV1.mp4"
             logging.info("Compressing video \t" + outputPath)
-            encodeDualCameraOutput(command, outputPath)
-            shutil.move(filePath, completedDir)
+            if encodeDualCameraOutput(command, outputPath):
+                shutil.move(filePath, completedDir)
 
 def compressVideos(outputDir, processor, codec, quality, model):
     completedDir = os.path.join(outputDir, 'completed')
@@ -544,6 +597,9 @@ def process(inputDir, outputDir, clipLength, processor, codec, quality, model):
         elif model == "s36":
             compressVideos(outputDir, processor, codec, quality, model)
 
+def exitOnTermination(signum, frame):
+    raise SystemExit(128 + signum)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", dest = "input", help = "Input Directory", type = str)
@@ -557,4 +613,8 @@ if __name__ == '__main__':
     if args.processor != 0 and args.processor != 1 and args.processor != 2:
         logging.error("Unknown processor parameter")
     else:
-        process(args.input, args.output, args.length, args.processor, args.codec, args.quality, args.model)
+        signal.signal(signal.SIGTERM, exitOnTermination)
+        try:
+            process(args.input, args.output, args.length, args.processor, args.codec, args.quality, args.model)
+        except KeyboardInterrupt:
+            raise SystemExit(130) from None
